@@ -6,10 +6,7 @@ import shlex
 import subprocess
 import tempfile
 import numpy as np
-import soundfile as sf  # pip install soundfile
-
-PATH_TO_CSV = "result.csv"
-PATH_TO_MP4 = "sample.mp4"
+import soundfile as sf
 
 
 def video_audio_to_csv(
@@ -22,7 +19,7 @@ def video_audio_to_csv(
     chunk: int = 60_000,
 ):
     """
-    Extract every audio sample from an MP4/MOV (even 'weird.mov.mp4') into a CSV.
+    Extract every audio sample from an MP4/MOV into a CSV.
 
     Parameters
     ----------
@@ -95,48 +92,57 @@ def video_audio_to_csv(
     print(f"[✓] wrote {idx} samples → {csv_path}")
 
 
+def plot_volume_envelope(
+    csv_path: str,
+    sample_rate: int = 44_100,
+    window_ms: int = 50,
+    output_path: str = "volume_envelope.png",
+):
+    """
+    Plot the volume envelope of audio data from a CSV file.
+    """
+    df = pd.read_csv(csv_path)
+
+    if {"L", "R"}.issubset(df.columns):  # stereo   → combine L+R
+        mono = (df["L"].abs() + df["R"].abs()) / 2.0
+        label = "Stereo RMS"
+    elif "sample" in df.columns:  # mono
+        mono = df["sample"].abs()
+        label = "Mono |sample|"
+    else:
+        raise ValueError("CSV does not have the expected columns.")
+
+    win = int(sample_rate * window_ms / 1000)  # samples per window
+    pad = (-len(mono)) % win  # pad so length % win == 0
+    mono_padded = np.pad(mono, (0, pad))
+
+    env_rms = np.sqrt(np.mean(mono_padded.reshape(-1, win) ** 2, axis=1))
+
+    t = (np.arange(len(env_rms)) * win + win / 2) / sample_rate
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(t, env_rms)
+    plt.title(f"Volume envelope (RMS, window = {window_ms} ms)")
+    plt.xlabel("Time [s]")
+    plt.ylabel("Amplitude (RMS)")
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    print(f"[✓] saved plot to {output_path}")
+
+
 video_audio_to_csv(
-    PATH_TO_MP4,
-    csv_path=PATH_TO_CSV,
+    "sample.mp4",
+    csv_path="result.csv",
     sample_rate=48_000,
     mono=True,
     rename=True,
 )
 
 
-# ──── user params ────────────────────────────────────────────────────────
-csv_path = Path(PATH_TO_CSV)  # ← put your real filename here
-sample_rate = 44_100  # Hz.  MUST match the rate you exported
-window_ms = 50  # smoothing window for the envelope
-# ─────────────────────────────────────────────────────────────────────────────
-
-# read the CSV
-df = pd.read_csv(csv_path)
-
-if {"L", "R"}.issubset(df.columns):  # stereo   → combine L+R
-    mono = (df["L"].abs() + df["R"].abs()) / 2.0
-    label = "Stereo RMS"
-elif "sample" in df.columns:  # mono
-    mono = df["sample"].abs()
-    label = "Mono |sample|"
-else:
-    raise ValueError("CSV does not have the expected columns.")
-
-# envelope (root-mean-square over sliding windows)
-win = int(sample_rate * window_ms / 1000)  # samples per window
-pad = (-len(mono)) % win  # pad so length % win == 0
-mono_padded = np.pad(mono, (0, pad))
-
-env_rms = np.sqrt(np.mean(mono_padded.reshape(-1, win) ** 2, axis=1))
-
-# time axis = midpoint of each window
-t = (np.arange(len(env_rms)) * win + win / 2) / sample_rate
-
-plt.figure(figsize=(10, 4))
-plt.plot(t, env_rms)
-plt.title(f"Volume envelope (RMS, window = {window_ms} ms)")
-plt.xlabel("Time [s]")
-plt.ylabel("Amplitude (RMS)")
-plt.grid(alpha=0.3)
-plt.tight_layout()
-plt.savefig("volume_envelope.png", dpi=150)
+plot_volume_envelope(
+    "result.csv",
+    44_100,
+    50,
+    "graph.png",
+)
