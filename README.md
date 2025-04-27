@@ -19,7 +19,7 @@ Ex.
 
 ```py
 video_audio_to_csv(
-    "sample.mp4",
+    "sample.mp3",
     csv_path="result.csv",
     sample_rate=48_000,
     mono=True,

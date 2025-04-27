@@ -2,74 +2,91 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 import shlex
+import json
 import subprocess
 import tempfile
 import numpy as np
 import soundfile as sf
 
 
-def video_audio_to_csv(
+def _probe_duration(path: str) -> float:
+    """Return media duration in **seconds** using ffprobe."""
+    probe_cmd = f"ffprobe -v quiet -print_format json -show_format {shlex.quote(path)}"
+    out = subprocess.check_output(probe_cmd, shell=True, text=True)
+    return float(json.loads(out)["format"]["duration"])
+
+
+def audio_to_csv(
     video_path: str,
-    csv_path: str = None,
+    csv_path: str | None = None,
     *,
-    sample_rate: int = 44_100,
+    sample_rate: int | None = 44_100,
     mono: bool = True,
-    rename: bool = False,
+    extend_hours: float | None = None,
+    rename_double_ext: bool = False,
     chunk: int = 60_000,
 ):
     """
-    Extract every audio sample from an MP4/MOV into a CSV.
+    Extract audio samples from *video_path* into *csv_path*.
 
     Parameters
     ----------
     video_path : str
-        Input video file.
+        Input media file.
     csv_path : str, optional
-        Destination CSV file (defaults to <video stem>.csv).
-    sample_rate : int, optional
-        Resample rate for output.  None = keep original rate.
+        Output CSV (defaults to <video stem>.csv).
+    sample_rate : int | None, optional
+        Resample rate.  None = keep original.
     mono : bool, optional
-        If True, down-mix to mono (1 column).  False → write 'L','R' columns.
-    rename : bool, optional
-        If True and the filename ends with double extensions (e.g. '.mov.mp4'),
-        rename it in-place to '.mp4' before processing.
+        Down-mix to mono if True (column name 'sample'); otherwise write 'L','R'.
+    extend_hours : float | None, optional
+        If given, loop the audio so the total duration is ≥ this many hours.
+        Looping is done with ffmpeg’s sample-accurate *-stream_loop* flag,
+        so there is no gap between repeats.
+    rename_double_ext : bool, optional
+        If the filename ends with '.mov.mp4', rename in-place to '.mp4'.
     chunk : int, optional
-        Samples per streaming block (keeps memory < ~1 MB).
-
-    Notes
-    -----
-    * Requires ffmpeg / ffprobe on PATH plus `pip install soundfile numpy`.
-    * Produces a header row: index [,L] [,R]
+        Frames per streaming block (keeps memory usage ~1 MB).
     """
-    # auto-rename/ensure correct format
+    # --- housekeeping -------------------------------------------------------
     stem, ext = os.path.splitext(video_path)
-    if rename and ext.lower() == ".mp4" and stem.lower().endswith(".mov"):
+    if rename_double_ext and ext.lower() == ".mp4" and stem.lower().endswith(".mov"):
         fixed = stem + ".mp4"
         os.replace(video_path, fixed)
         video_path = fixed
         print(f"[info] renamed to {video_path}")
 
-    if not csv_path:
-        csv_path = os.path.splitext(video_path)[0] + ".csv"
+    if csv_path is None:
+        csv_path = stem + ".csv"
 
-    # create temporary .wav file (lossless)
+    # --- figure out looping -------------------------------------------------
+    loop_opt = ""
+    limit_opt = ""
+    if extend_hours is not None and extend_hours > 0:
+        target_sec = extend_hours * 3600
+        src_sec = _probe_duration(video_path)
+        if target_sec > src_sec:
+            loops = math.ceil(target_sec / src_sec) - 1
+            loop_opt = f"-stream_loop {loops}"
+            # Trim in case the last repeat overshoots a little
+            limit_opt = f"-t {target_sec:.3f}"
+
+    # --- transcode to a temp WAV -------------------------------------------
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         wav_path = tmp.name
 
     ac_opt = 1 if mono else 2
     ar_opt = f"-ar {sample_rate}" if sample_rate else ""
     cmd = (
-        f"ffmpeg -y -loglevel error -i {shlex.quote(video_path)} "
-        f"-ac {ac_opt} {ar_opt} -f wav {shlex.quote(wav_path)}"
+        f"ffmpeg -y -loglevel error {loop_opt} -i {shlex.quote(video_path)} "
+        f"{limit_opt} -ac {ac_opt} {ar_opt} -f wav {shlex.quote(wav_path)}"
     )
     subprocess.run(cmd, shell=True, check=True)
 
-    # WAV -> CSV
+    # --- stream WAV -> CSV --------------------------------------------------
     with sf.SoundFile(wav_path) as f, open(csv_path, "w") as out:
-        if mono:
-            out.write("index,sample\n")
-        else:
-            out.write("index,L,R\n")
+        header = "index,sample\n" if mono else "index,L,R\n"
+        out.write(header)
 
         idx = 0
         while True:
@@ -89,6 +106,21 @@ def video_audio_to_csv(
 
     os.remove(wav_path)
     print(f"[✓] wrote {idx} samples → {csv_path}")
+
+
+# ---------------------------------------------------------------------------
+# Example usage
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    audio_to_csv(
+        "sample.mp3",
+        csv_path="result.csv",
+        sample_rate=48_000,
+        mono=True,
+        extend_hours=2.0,  # 2-hour seamless loop
+        rename_double_ext=True,
+    )
 
 
 def plot_volume_envelope(
@@ -130,8 +162,8 @@ def plot_volume_envelope(
     print(f"[✓] saved plot to {output_path}")
 
 
-video_audio_to_csv(
-    "sample.mp4",
+audio_to_csv(
+    "sample.mp3",
     csv_path="result.csv",
     sample_rate=48_000,
     mono=True,
