@@ -100,6 +100,7 @@ def audio_to_csv(
             f"[✓] CSV now contains {total_plays} contiguous plays "
             f"({base.shape[0] * total_plays:,} samples total)"
         )
+    return csv_path
 
 
 def plot_volume_envelope(
@@ -177,19 +178,35 @@ def convert_to_decibels(csv_path: str) -> str:
 
 
 if __name__ == "__main__":
-    audio_to_csv(
-        "./fan/fan_1hr.mp3",
-        csv_path="./fan/fan.csv",
+    mp3_path = "./data/fan/fan.mp3"
+
+    csv_path = audio_to_csv(
+        mp3_path,
         sample_rate=1,
         mono=True,
-        loops=5,  # <-- play the file 5× in a row
+        loops=5,  # <-- play the file 5 times in a row
         rename_double_ext=True,
     )
 
-    # plot_volume_envelope(
-    #     csv_path="white-noise-1hr.csv",  # CSV produced by audio_to_csv
-    #     sample_rate=1,  # Hz – must match the rate you used (or want to view)
-    #     window_ms=1000,  # analysis window width in milliseconds
-    #     output_path="white-noise.png",  # destination image
-    # )
-    convert_to_decibels("./white-noise/white-noise.csv")
+    plot_volume_envelope(
+        csv_path=csv_path,  # CSV produced by audio_to_csv
+        sample_rate=1,  # Hz – must match the rate you used (or want to view)
+        window_ms=1000,  # analysis window width in milliseconds
+        output_path=csv_path.replace(".csv", ".png"),  # destination image (png)
+    )
+
+    # convert csv values to decibel
+    db_src = convert_to_decibels(csv_path)
+
+    # normalize decibel values between -1 and 1 for the ol' A I
+    df = pd.read_csv(db_src)
+    if "dBFS" not in df.columns:
+        raise ValueError(f"'dBFS' column not found in {db_src}")
+
+    mean_val = df["dBFS"].mean()
+
+    df["dBFS_norm"] = (df["dBFS"] - mean_val) / mean_val  # (x-mean)/mean
+
+    out_norm = db_src.replace("_db.csv", "_db_norm.csv")
+    df[["index", "dBFS_norm"]].to_csv(out_norm, index=False)
+    print(f"[✓] wrote normalised file → {out_norm}")
