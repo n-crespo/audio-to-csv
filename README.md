@@ -1,7 +1,7 @@
-# mp4 to csv
+# Audio to csv
 
-Converts the audio from a mp4 file to mono or stereo channel values in a csv
-file. Includes utility function to visualize audio changes.
+Converts an audio file to mono or stereo channel values in a csv file. Includes
+utility function to visualize audio changes.
 
 ![audio visualization](./graph.png)
 
