@@ -1,9 +1,18 @@
-# Audio to csv
+# Audio to .csv
 
-Converts an audio file to mono or stereo channel values in a csv file. Includes
-utility function to visualize audio changes.
+![visualized audio file](./data/rain/rain.png)
 
-![audio visualization](./graph.png)
+This project facilitates the training of a machine learning model on audio data
+by providing the following features:
+
+- Transform audio files into .csv format.
+- Visualize the generated .csv data with `matplotlib`.
+- Convert .csv data values into decibels.
+- Extend audio data by looping it seamlessly to create longer samples.
+- Normalize decibel values to prepare them for model training.
+
+This was utilized to introduce deliberate noise into audio data for training
+models in Nea.
 
 ## Install Requirements
 
@@ -15,22 +24,5 @@ pip install -r requirements.txt
 
 ## Usage
 
-Ex.
-
-```py
-video_audio_to_csv(
-    "sample.mp3",
-    csv_path="result.csv",
-    sample_rate=48_000,
-    mono=True,
-    rename=True,
-)
-
-plot_volume_envelope(
-    "result.csv",
-    44_100,
-    50,
-    "graph.png",
-)
-```
+see bottom of `audio_to_csv.py`
 
