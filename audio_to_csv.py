@@ -59,6 +59,7 @@ def audio_to_csv(
         f"ffmpeg -y -loglevel error -i {shlex.quote(video_path)} "
         f"-ac {ac_opt} {ar_opt} -f wav {shlex.quote(wav_path)}"
     )
+    print("Starting conversion...")
     subprocess.run(cmd, shell=True, check=True)
 
     # --------------------------------------------- stream WAV → CSV ---------
@@ -140,23 +141,55 @@ def plot_volume_envelope(
     print(f"[✓] saved plot to {output_path}")
 
 
-# ---------------------------------------------------------------------------
-# Example
-# ---------------------------------------------------------------------------
+def convert_to_decibels(csv_path: str) -> str:
+    """
+    Read *csv_path*, convert its sample column(s) to dBFS, and write
+    <original_stem>_db.csv alongside the source file.
+
+    Returns
+    -------
+    out_path : str
+        Path of the file that was written.
+    """
+    df = pd.read_csv(csv_path)
+
+    # --- choose / down-mix channel(s) --------------------------------------
+    if {"L", "R"}.issubset(df.columns):
+        samples = 0.5 * (df["L"] + df["R"])  # simple L+R → mono
+    elif "sample" in df.columns:
+        samples = df["sample"]
+    else:
+        raise ValueError("CSV lacks expected 'sample' or 'L,R' columns.")
+
+    # --- integer → float in [-1, 1] ---------------------------------------
+    s_float = samples.astype(np.float32) / 32767.0
+
+    # --- instantaneous dBFS ----------------------------------------------
+    eps = 1e-10  # avoid log(0)
+    df["dBFS"] = 20 * np.log10(np.abs(s_float) + eps)
+
+    # --- write new CSV ----------------------------------------------------
+    stem, _ = os.path.splitext(csv_path)
+    out_path = f"{stem}_db.csv"
+    df[["index", "dBFS"]].to_csv(out_path, index=False)
+    print(f"[✓] wrote dBFS data → {out_path}")
+    return out_path
 
 
 if __name__ == "__main__":
     audio_to_csv(
-        "sample.mp4",
-        csv_path="result.csv",
-        sample_rate=48_000,
+        "./fan/fan_1hr.mp3",
+        csv_path="./fan/fan.csv",
+        sample_rate=1,
         mono=True,
         loops=5,  # <-- play the file 5× in a row
         rename_double_ext=True,
     )
-    plot_volume_envelope(
-        csv_path="result.csv",  # CSV produced by audio_to_csv
-        sample_rate=48_100,  # Hz – must match the rate you used (or want to view)
-        window_ms=20,  # analysis window width in milliseconds
-        output_path="graph.png",  # destination image
-    )
+
+    # plot_volume_envelope(
+    #     csv_path="white-noise-1hr.csv",  # CSV produced by audio_to_csv
+    #     sample_rate=1,  # Hz – must match the rate you used (or want to view)
+    #     window_ms=1000,  # analysis window width in milliseconds
+    #     output_path="white-noise.png",  # destination image
+    # )
+    convert_to_decibels("./white-noise/white-noise.csv")
