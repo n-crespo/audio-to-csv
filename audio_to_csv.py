@@ -1,19 +1,11 @@
-import matplotlib.pyplot as plt
-import pandas as pd
 import os
 import shlex
-import json
 import subprocess
 import tempfile
 import numpy as np
 import soundfile as sf
-
-
-def _probe_duration(path: str) -> float:
-    """Return media duration in **seconds** using ffprobe."""
-    probe_cmd = f"ffprobe -v quiet -print_format json -show_format {shlex.quote(path)}"
-    out = subprocess.check_output(probe_cmd, shell=True, text=True)
-    return float(json.loads(out)["format"]["duration"])
+import pandas as pd
+import matplotlib.pyplot as plt
 
 
 def audio_to_csv(
@@ -22,7 +14,7 @@ def audio_to_csv(
     *,
     sample_rate: int | None = 44_100,
     mono: bool = True,
-    extend_hours: float | None = None,
+    loops: int = 1,  # ← number of perfect repeats (5 ⇒ play 6 times total)
     rename_double_ext: bool = False,
     chunk: int = 60_000,
 ):
@@ -32,23 +24,21 @@ def audio_to_csv(
     Parameters
     ----------
     video_path : str
-        Input media file.
+        Input media file (any format ffmpeg understands).
     csv_path : str, optional
         Output CSV (defaults to <video stem>.csv).
     sample_rate : int | None, optional
-        Resample rate.  None = keep original.
+        Resample rate; None = keep original.
     mono : bool, optional
-        Down-mix to mono if True (column name 'sample'); otherwise write 'L','R'.
-    extend_hours : float | None, optional
-        If given, loop the audio so the total duration is ≥ this many hours.
-        Looping is done with ffmpeg’s sample-accurate *-stream_loop* flag,
-        so there is no gap between repeats.
+        Down-mix to mono if True (column 'sample'); else write 'L','R'.
+    loops : int, optional
+        Duplicate the CSV *loops* times after the first pass. 1 = no looping.
     rename_double_ext : bool, optional
-        If the filename ends with '.mov.mp4', rename in-place to '.mp4'.
+        If the file ends in '.mov.mp4', rename it to '.mp4' before processing.
     chunk : int, optional
-        Frames per streaming block (keeps memory usage ~1 MB).
+        Frames per read; keeps memory usage small.
     """
-    # --- housekeeping -------------------------------------------------------
+    # --------------------------------------------------- housekeeping -------
     stem, ext = os.path.splitext(video_path)
     if rename_double_ext and ext.lower() == ".mp4" and stem.lower().endswith(".mov"):
         fixed = stem + ".mp4"
@@ -59,31 +49,19 @@ def audio_to_csv(
     if csv_path is None:
         csv_path = stem + ".csv"
 
-    # --- figure out looping -------------------------------------------------
-    loop_opt = ""
-    limit_opt = ""
-    if extend_hours is not None and extend_hours > 0:
-        target_sec = extend_hours * 3600
-        src_sec = _probe_duration(video_path)
-        if target_sec > src_sec:
-            loops = math.ceil(target_sec / src_sec) - 1
-            loop_opt = f"-stream_loop {loops}"
-            # Trim in case the last repeat overshoots a little
-            limit_opt = f"-t {target_sec:.3f}"
-
-    # --- transcode to a temp WAV -------------------------------------------
+    # ------------------------------------------- transcode → temp WAV -------
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         wav_path = tmp.name
 
     ac_opt = 1 if mono else 2
     ar_opt = f"-ar {sample_rate}" if sample_rate else ""
     cmd = (
-        f"ffmpeg -y -loglevel error {loop_opt} -i {shlex.quote(video_path)} "
-        f"{limit_opt} -ac {ac_opt} {ar_opt} -f wav {shlex.quote(wav_path)}"
+        f"ffmpeg -y -loglevel error -i {shlex.quote(video_path)} "
+        f"-ac {ac_opt} {ar_opt} -f wav {shlex.quote(wav_path)}"
     )
     subprocess.run(cmd, shell=True, check=True)
 
-    # --- stream WAV -> CSV --------------------------------------------------
+    # --------------------------------------------- stream WAV → CSV ---------
     with sf.SoundFile(wav_path) as f, open(csv_path, "w") as out:
         header = "index,sample\n" if mono else "index,L,R\n"
         out.write(header)
@@ -107,20 +85,20 @@ def audio_to_csv(
     os.remove(wav_path)
     print(f"[✓] wrote {idx} samples → {csv_path}")
 
+    # --------------------------------------------- duplicate rows ----------
 
-# ---------------------------------------------------------------------------
-# Example usage
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    audio_to_csv(
-        "sample.mp3",
-        csv_path="result.csv",
-        sample_rate=48_000,
-        mono=True,
-        extend_hours=2.0,  # 2-hour seamless loop
-        rename_double_ext=True,
-    )
+    total_plays = max(1, loops)  # loops==1  → just the original
+    if total_plays > 1:
+        base = np.loadtxt(csv_path, delimiter=",", skiprows=1, dtype=np.int32)
+        with open(csv_path, "a") as out:
+            for i in range(1, total_plays):
+                dup = base.copy()
+                dup[:, 0] += i * base.shape[0]
+                np.savetxt(out, dup, fmt="%d", delimiter=",")
+        print(
+            f"[✓] CSV now contains {total_plays} contiguous plays "
+            f"({base.shape[0] * total_plays:,} samples total)"
+        )
 
 
 def plot_volume_envelope(
@@ -162,18 +140,23 @@ def plot_volume_envelope(
     print(f"[✓] saved plot to {output_path}")
 
 
-audio_to_csv(
-    "sample.mp3",
-    csv_path="result.csv",
-    sample_rate=48_000,
-    mono=True,
-    rename=True,
-)
+# ---------------------------------------------------------------------------
+# Example
+# ---------------------------------------------------------------------------
 
 
-plot_volume_envelope(
-    "result.csv",
-    44_100,
-    50,
-    "graph.png",
-)
+if __name__ == "__main__":
+    audio_to_csv(
+        "sample.mp4",
+        csv_path="result.csv",
+        sample_rate=48_000,
+        mono=True,
+        loops=5,  # <-- play the file 5× in a row
+        rename_double_ext=True,
+    )
+    plot_volume_envelope(
+        csv_path="result.csv",  # CSV produced by audio_to_csv
+        sample_rate=48_100,  # Hz – must match the rate you used (or want to view)
+        window_ms=20,  # analysis window width in milliseconds
+        output_path="graph.png",  # destination image
+    )
